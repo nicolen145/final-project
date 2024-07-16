@@ -11,8 +11,9 @@ This survey consists of multiple-choice questions focusing on the lives of older
 We analyzed key features related to well-being, such as relationship quality, life satisfaction, anxiety levels ,and more ,to address our research question.
 
 # Instructions on the data:
-The data that was provided to us was in an IBM file, but we replaced it with an Excel file for easier work.
-The data file "data_toshare.xlsx" should be placed in "Data" folder.
+1)The data that was provided to us was in an IBM file, but we replaced it with an Excel file for easier work so the new data should be an xlsx file.
+
+2)The data file "data_toshare.xlsx" should be placed in "Data" folder.
 
 # Data Columns
 
