@@ -1,5 +1,6 @@
 # SISE2601 Project data description
 ================
+
 Team name: Nicole Neginsky , Gal Omesi, Lilach Zaks.
 
 This Markdown file describes the data folder structure and organization ...
