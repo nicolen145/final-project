@@ -10,7 +10,7 @@ The data we used to answer our research question comes from a survey by Dr. Kuhn
 This survey consists of multiple-choice questions focusing on the lives of older LGBTQ individuals. The responses were compiled into a data file.
 We analyzed key features related to well-being, such as relationship quality, life satisfaction, anxiety levels ,and more ,to address our research question.
 
-Instructions on the data:
+*Instructions on the data:*
 The data that was provided to us was in an IBM file, but we replaced it with an Excel file for easier work.
 The data file "data_toshare.xlsx" should be placed in "Data" folder.
 
