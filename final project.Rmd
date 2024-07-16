@@ -1,0 +1,361 @@
+---
+  title: "Final Project"
+author: "Team 6"
+output:
+  pdf_document: default
+html_document:
+  df_print: paged
+---
+
+*Libraries*
+
+```{r}
+# Load necessary libraries
+library(readxl)
+library(writexl)
+library(corrplot)
+library(dplyr)
+library(caret)
+library(glmnet)
+library(knitr)
+library(boot)
+library(smotefamily)
+library(RANN)
+library(ggplot2)
+library(tidyr)
+library(forcats)
+```
+
+*Data cleaning*
+
+```{r include_data_readme, comment=''}
+# Load the data
+data <- read_excel("data/data_toshare.xlsx")
+
+
+# Display the first few rows to understand the data structure
+cat("First few rows of the original data:\n")
+print(head(data))
+
+# Calculate the number of rows and columns before cleaning
+initial_rows <- nrow(data)
+initial_cols <- ncol(data)
+
+# Remove specified columns
+columns_to_remove <- c("ResponseId", "add", "lang", "sday", "smonth", "syear","Progress" )
+data <- data[, !(names(data) %in% columns_to_remove)]
+
+# Remove columns with more than 50% null values
+threshold_col <- 0.5 * nrow(data)
+cleaned_data <- data[, colSums(is.na(data)) <= threshold_col]
+
+# Replace nulls in numeric columns with the median value
+numeric_columns <- sapply(cleaned_data, is.numeric)
+cleaned_data[, numeric_columns] <- lapply(cleaned_data[, numeric_columns], function(col) {
+  col[is.na(col)] <- median(col, na.rm = TRUE)
+  return(col)
+})
+
+# Remove rows with more than 50% null values
+threshold_row <- 0.5 * ncol(cleaned_data)
+cleaned_data <- cleaned_data[rowSums(is.na(cleaned_data)) <= threshold_row, ]
+
+# Calculate the number of rows and columns after cleaning
+final_rows <- nrow(cleaned_data)
+final_cols <- ncol(cleaned_data)
+
+# Display the number of rows and columns before and after cleaning
+cat("Number of rows before cleaning:", initial_rows, "\n")
+cat("Number of rows after cleaning:", final_rows, "\n")
+cat("Number of columns before cleaning:", initial_cols, "\n")
+cat("Number of columns after cleaning:", final_cols, "\n")
+
+# Define the statistic function for bootstrapping
+mean_lifesat <- function(data, indices) {
+  d <- data[indices, ]  # allows boot to select sample
+  return(mean(d$lifesat))
+}
+print(head(cleaned_data))
+
+data <- cleaned_data
+```
+
+
+*Correlation matrix*
+
+```{r}
+
+# Identify numerical and categorical columns
+num_cols <- sapply(data, is.numeric)
+cat_cols <- sapply(data, is.character)
+
+# Handle missing values
+# For numerical columns, impute with mean
+data[, num_cols] <- lapply(data[, num_cols], function(x) ifelse(is.na(x), mean(x, na.rm = TRUE), x))
+
+# For categorical columns, impute with mode
+data[, cat_cols] <- lapply(data[, cat_cols], function(x) {
+  mode_value <- names(sort(table(x), decreasing = TRUE))[1]
+  ifelse(is.na(x), mode_value, x)
+})
+
+# Convert categorical variables to factors
+data[, cat_cols] <- lapply(data[, cat_cols], as.factor)
+
+# Remove columns with zero variance
+non_zero_var_cols <- sapply(data, function(x) var(x, na.rm = TRUE) != 0)
+data <- data[, non_zero_var_cols]
+
+# Calculate the correlation matrix
+cor_matrix <- cor(data[, sapply(data, is.numeric)], use = "complete.obs")
+
+# Plot the correlation matrix
+corrplot(cor_matrix, method = "color", tl.cex = 0.7, tl.col = "black")
+
+# Select the features that have a high correlation with the target variable 'lifesat'
+target_cor <- cor_matrix[,"lifesat"]
+high_cor_features <- names(target_cor[abs(target_cor) > 0.3])  # Adjust the threshold as needed
+relevant_features <- target_cor[high_cor_features]
+
+# Convert the relevant features to a data frame
+relevant_features_df <- as.data.frame(relevant_features)
+kable(relevant_features_df, format = "markdown", align = "c")
+
+# From the relevant features the correlation matrix returns we choose the most relevent for our model
+
+most_relevant_features <- c("spa", "sph", "partner", "qol", "cesd", "gai", "lon", "int_homophobia", "fdistress")
+
+```
+
+*Creating model*
+
+```{r}
+
+# For categorical columns, impute with mode
+cat_cols <- sapply(data, is.character)
+data[cat_cols] <- lapply(data[cat_cols], function(x) {
+  mode_value <- names(sort(table(x), decreasing = TRUE))[1]
+  ifelse(is.na(x), mode_value, x)
+})
+
+# Convert categorical variables to factors
+data[cat_cols] <- lapply(data[cat_cols], as.factor)
+
+
+# Select the features that exist in the data
+X <- data %>% select(all_of(most_relevant_features))
+y <- data$lifesat
+
+# Combine X and y for SMOTE
+data_combined <- cbind(X, lifesat = y)
+
+
+# Split the data into training and testing sets
+set.seed(42)
+trainIndex <- createDataPartition(y, p = .8, list = FALSE, times = 1)
+X_train <- X[trainIndex, ]
+X_test <- X[-trainIndex, ]
+y_train <- y[trainIndex]
+y_test <- y[-trainIndex]
+
+# Standardize the numerical features
+preProcValues <- preProcess(X_train, method = c("center", "scale"))
+X_train <- predict(preProcValues, X_train)
+X_test <- predict(preProcValues, X_test)
+
+# Ridge regression
+ridge_model <- cv.glmnet(as.matrix(X_train), y_train, alpha = 0)
+ridge_best_lambda <- ridge_model$lambda.min
+ridge_predictions <- predict(ridge_model, s = ridge_best_lambda, newx = as.matrix(X_test))
+ridge_rmse <- sqrt(mean((ridge_predictions - y_test)^2))
+
+# Lasso regression
+lasso_model <- cv.glmnet(as.matrix(X_train), y_train, alpha = 1)
+lasso_best_lambda <- lasso_model$lambda.min
+lasso_predictions <- predict(lasso_model, s = lasso_best_lambda, newx = as.matrix(X_test))
+lasso_rmse <- sqrt(mean((lasso_predictions - y_test)^2))
+
+# Print the results
+print(paste("Ridge RMSE:", ridge_rmse))
+print(paste("Lasso RMSE:", lasso_rmse))
+print(paste("Best lambda for Ridge:", ridge_best_lambda))
+print(paste("Best lambda for Lasso:", lasso_best_lambda))
+
+# The results shows that the lasso model is slightly better so we choose it
+```
+*Display of Lasso model and error evaluation*
+
+```{r}
+
+# Print Lasso model details
+print("Coefficients for Lasso model:")
+print(coef(lasso_model, s = lasso_best_lambda))
+
+# Print Lasso model details using knitr
+lasso_coefficients <- as.matrix(coef(lasso_model, s = lasso_best_lambda))
+lasso_coefficients_df <- data.frame(Feature = rownames(lasso_coefficients), Coefficient = lasso_coefficients[, 1])
+kable(lasso_coefficients_df, format = "markdown", align = "c")
+
+# Lasso regression
+lasso_model <- cv.glmnet(as.matrix(X_train), y_train, alpha = 1)
+lasso_best_lambda <- lasso_model$lambda.min
+lasso_predictions <- predict(lasso_model, s = lasso_best_lambda, newx = as.matrix(X_test))
+lasso_rmse <- sqrt(mean((lasso_predictions - y_test)^2))
+lasso_mse <- mean((lasso_predictions - y_test)^2)
+lasso_mae <- mean(abs(lasso_predictions - y_test))
+lasso_r2 <- 1 - sum((lasso_predictions - y_test)^2) / sum((y_test - mean(y_test))^2)
+
+# Print the results
+print(paste("RMSE:", lasso_rmse))
+print(paste("MSE:", lasso_mse))
+print(paste("MAE:", lasso_mae))
+print(paste("R²:", lasso_r2))
+
+print(paste("Best lambda for Lasso:", lasso_best_lambda))
+
+```
+
+*Visualization*
+
+*Correlation between Homophobia, Mental Health, and Environmental Support*
+```{r}
+# Assuming 'selected_data' is your cleaned and preprocessed DataFrame
+# Select relevant columns
+
+# Create a combined score for mental health (negative direction: higher score = worse mental health)
+selected_data <- data %>%
+  mutate(mental_health = cesd + gai + lon,
+         environment_support = bio_stable + sp_stable + choice_stable)
+
+# Discretize the combined environmental support into bins for faceting
+selected_data <- selected_data %>%
+  mutate(environment_support_bins = cut(environment_support, 
+                                        breaks = 4, 
+                                        labels = c("Low", "Medium-Low", "Medium-High", "High")))
+
+# Define LGBTQ+ color palette
+lgbtq_colors <- c("red", "orange", "yellow", "green", "blue", "purple")
+
+# Plot the relationships with facets based on combined environmental support
+ggplot(selected_data, aes(x = int_homophobia, y = mental_health)) +
+  geom_point(aes(color = environment_support)) +
+  geom_smooth(method = "lm", se = FALSE, color = "black") +
+  facet_wrap(~ environment_support_bins) +
+  scale_color_gradientn(colors = lgbtq_colors) +
+  labs(title = "Correlation between Homophobia, Mental Health, and Environmental Support",
+       x = "Internalized Homophobia",
+       y = "Mental Health issues",
+       color = "Environmental Support") +
+  theme_minimal() +
+  theme(
+    axis.title.x = element_text(size = 14),
+    axis.title.y = element_text(size = 14),
+    strip.text = element_text(size = 14),
+    axis.text.x = element_text(size = 10),
+   
+    panel.background = element_rect(fill = "#F6F5F2"),
+    plot.background = element_rect(fill = "white"),
+    panel.grid.major = element_line(color = "white"),
+    panel.grid.minor = element_line(color = "white")
+  )
+
+```
+
+*Impact of Family Closeness on Quality of Life (not in the report)*
+```{r}
+
+Closeness_data <- data %>%
+  mutate(bio_close = case_when(
+    bio_close == 1 ~ "Strongly Disagree",   
+    bio_close == 2 ~ "Disagree", 
+    bio_close == 3 ~ "Neutral",
+    bio_close == 4 ~ "Agree",
+    bio_close == 5 ~ "Strongly Agree"
+  )) %>%
+  mutate(bio_close = factor(bio_close, levels = c("Strongly Disagree", "Disagree", "Neutral", "Agree", "Strongly Agree")))
+
+# Plotting
+ggplot(data, aes(x = bio_close, y = qol)) +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  labs(title = "Impact of Family Closeness on Quality of Life",
+       x = "Family Closeness",
+       y = "Quality of Life") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+        axis.title.x = element_text(size = 14),
+        axis.title.y = element_text(size = 14),
+        legend.title = element_text(size = 12),
+        legend.text = element_text(size = 10),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+
+
+```
+
+*Impact of Closet Status on Life Satisfaction*
+```{r}
+# Define pastel LGBTQ+ pride colors
+pastel_lgbtq_colors <- c("#ffc09f", "#ffee93", "#adf7b6", "#B3D9FF")
+
+# Ensure the closet column is a factor and update the levels
+closet_data <- data %>%
+  mutate(closet = factor(closet, levels = 1:4, labels = c(
+    "Mostly Out",
+    "Partially Out",
+    "Barely Out",
+    "Not Out"
+  )))
+
+# Summarize the data to get mean Life Satisfaction for each level of closet
+closet_summary <- closet_data %>%
+  group_by(closet) %>%
+  summarize(mean_lifesat = mean(lifesat, na.rm = TRUE))
+
+# Bar plot with pastel LGBTQ+ pride colors
+ggplot(closet_summary, aes(x = closet, y = mean_lifesat, fill = closet)) +
+  geom_bar(stat = "identity", alpha = 0.7) +
+  scale_fill_manual(values = pastel_lgbtq_colors) +
+  labs(title = "Impact of Closet Status on Life Satisfaction",
+       x = "Closet Status",
+       y = "Mean Life Satisfaction") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+        axis.title.x = element_text(size = 14),
+        axis.title.y = element_text(size = 14),
+        legend.position = "none",
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+
+
+```
+*relationship between family Support and depression/anxiety*
+```{r}
+
+rainbow_palette <- c("Depression" = "#eac4d5", "Anxiety" = "#95b8d1")
+
+# Social Support and Depression/Anxiety
+social_support_plot <- data %>%
+  select(bio_suprec, bio_supgv, cesd, gai) %>%
+  gather(key = "Measure", value = "Score", cesd, gai) %>%
+  mutate(Measure = recode(Measure, cesd = "Depression", gai = "Anxiety")) %>%
+  ggplot(aes(x = bio_suprec, y = Score, color = Measure)) +
+  geom_smooth(method = "lm", se = FALSE, size = 1.5) +
+  scale_color_manual(values = rainbow_palette) +
+  labs(title = "Family Support and Depression/Anxiety",
+       x = "Receiving Help from Family",
+       y = "Depression/Anxiety Scores",
+       color = "Measure") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+        axis.title.x = element_text(size = 14),
+        axis.title.y = element_text(size = 14),
+        legend.title = element_text(size = 12),
+        legend.text = element_text(size = 10),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+
+# Display the plot
+print(social_support_plot)
+
+
+```
